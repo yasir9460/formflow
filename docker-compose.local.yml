@@ -1,0 +1,31 @@
+services:
+  formflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    container_name: ccpl-formflow-app
+    restart: unless-stopped
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    volumes:
+      - ./data:/data
+    expose:
+      - "8080"
+    networks:
+      - formflow-network
+
+  proxy:
+    image: nginx:1.27-alpine
+    container_name: ccpl-formflow-proxy
+    restart: unless-stopped
+    depends_on:
+      - formflow
+    ports:
+      - "${FORMFLOW_PORT:-8080}:80"
+    volumes:
+      - ./deploy/local/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - formflow-network
+
+networks:
+  formflow-network:
+    name: ccpl-formflow_formflow-network

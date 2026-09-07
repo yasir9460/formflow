@@ -28,6 +28,63 @@ export type FormField = {
   };
 };
 
+export type DocumentMeta = {
+  outputStyle: "operational-form" | "controlled-document";
+  documentType: string;
+  versionLabel: string;
+  classification: string;
+  documentOwner: string;
+  documentStatus: string;
+  effectiveDate: string;
+  preparedBy: string;
+  reviewedBy: string;
+  approvedBy: string;
+  subtitle: string;
+};
+
+export type DocumentBlockType =
+  | "heading1"
+  | "heading2"
+  | "heading3"
+  | "paragraph"
+  | "bullets"
+  | "table"
+  | "image"
+  | "divider"
+  | "spacer"
+  | "page-break"
+  | "signature";
+
+export type DocumentBlock = {
+  id: string;
+  type: DocumentBlockType;
+  text?: string;
+  items?: string[];
+  cells?: string[][];
+  headerRow?: boolean;
+  imageDataUrl?: string;
+  caption?: string;
+  align?: "left" | "center" | "right" | "justify";
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  spacerHeight?: number;
+};
+
+export const defaultDocumentMeta: DocumentMeta = {
+  outputStyle: "operational-form",
+  documentType: "FORM",
+  versionLabel: "1.0",
+  classification: "INTERNAL",
+  documentOwner: "Quality Management",
+  documentStatus: "DRAFT FOR APPROVAL",
+  effectiveDate: "",
+  preparedBy: "",
+  reviewedBy: "",
+  approvedBy: "Director",
+  subtitle: "",
+};
+
 type TemplateRow = {
   id: string;
   name: string;
@@ -36,6 +93,15 @@ type TemplateRow = {
   category: string;
   description: string;
   field_schema: string;
+  document_meta: string | null;
+  content_schema?: string | null;
+  change_description?: string | null;
+  revision_date?: string | null;
+  base_template_id?: string | null;
+  source_import_id?: string | null;
+  source_file_name?: string | null;
+  source_file_hash?: string | null;
+  import_summary?: string | null;
   numbering_pattern: string;
   layout_file_path: string | null;
   status: string;
@@ -57,50 +123,6 @@ type SubmissionRow = {
   pdf_path: string;
 };
 
-const templatesSql = `CREATE TABLE IF NOT EXISTS templates (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  code TEXT NOT NULL,
-  version INTEGER NOT NULL DEFAULT 1,
-  category TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  field_schema TEXT NOT NULL,
-  numbering_pattern TEXT NOT NULL,
-  layout_file_path TEXT,
-  status TEXT NOT NULL DEFAULT 'Active',
-  created_by TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE(code, version)
-)`;
-
-const submissionsSql = `CREATE TABLE IF NOT EXISTS submissions (
-  id TEXT PRIMARY KEY,
-  template_id TEXT NOT NULL,
-  unique_number TEXT NOT NULL UNIQUE,
-  data TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'Draft',
-  created_by TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  revision INTEGER NOT NULL DEFAULT 0,
-  pdf_path TEXT NOT NULL
-)`;
-
-const auditSql = `CREATE TABLE IF NOT EXISTS audit_logs (
-  id TEXT PRIMARY KEY,
-  submission_id TEXT NOT NULL,
-  changed_by TEXT NOT NULL,
-  timestamp TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  diff_json TEXT NOT NULL
-)`;
-
-const sequenceSql = `CREATE TABLE IF NOT EXISTS sequences (
-  sequence_key TEXT PRIMARY KEY,
-  last_number INTEGER NOT NULL DEFAULT 0
-)`;
-
 export function db() {
   const database = (globalThis as unknown as { __FORMFLOW_DB__?: D1Database }).__FORMFLOW_DB__;
   if (!database) throw new Error("Database binding is unavailable");
@@ -108,15 +130,8 @@ export function db() {
 }
 
 export async function ensureSchema() {
-  const database = db();
-  await database.batch([
-    database.prepare(templatesSql),
-    database.prepare(submissionsSql),
-    database.prepare(auditSql),
-    database.prepare(sequenceSql),
-    database.prepare("CREATE INDEX IF NOT EXISTS submissions_template_idx ON submissions(template_id)"),
-    database.prepare("CREATE INDEX IF NOT EXISTS audit_submission_idx ON audit_logs(submission_id)"),
-  ]);
+  // Schema installation is an offline, versioned deployment step. Never mutate schema on requests.
+  await db().prepare("SELECT 1 FROM ac_users LIMIT 1").first();
 }
 
 const calibrationFields: FormField[] = [
@@ -168,13 +183,17 @@ export async function seedIfEmpty(actor = "System") {
 
   await database.batch(
     rows.map((row) => database.prepare(`INSERT INTO templates
-      (id, name, code, version, category, description, field_schema, numbering_pattern, status, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, 1, ?, ?, ?, ?, 'Active', ?, ?, ?)`)
-      .bind(row.id, row.name, row.code, row.category, row.description, JSON.stringify(row.fields), "CCPL-FRM-{CODE}-{YYYY}-{SEQ:4}", actor, now, now)),
+      (id, name, code, version, category, description, field_schema, document_meta, numbering_pattern, status, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, 'Active', ?, ?, ?)`)
+      .bind(row.id, row.name, row.code, row.category, row.description, JSON.stringify(row.fields), JSON.stringify(defaultDocumentMeta), "CCPL-FRM-{CODE}-{YYYY}-{SEQ:4}", actor, now, now)),
   );
 }
 
 export function parseTemplate(row: TemplateRow) {
+  let storedMeta: Partial<DocumentMeta> = {};
+  let contentSchema: DocumentBlock[] = [];
+  try { storedMeta = JSON.parse(row.document_meta || "{}") as Partial<DocumentMeta>; } catch { storedMeta = {}; }
+  try { contentSchema = JSON.parse(row.content_schema || "[]") as DocumentBlock[]; } catch { contentSchema = []; }
   return {
     id: row.id,
     name: row.name,
@@ -183,6 +202,15 @@ export function parseTemplate(row: TemplateRow) {
     category: row.category,
     description: row.description,
     fields: JSON.parse(row.field_schema) as FormField[],
+    contentSchema,
+    changeDescription: row.change_description || "Initial issue",
+    revisionDate: row.revision_date || "",
+    baseTemplateId: row.base_template_id || "",
+    sourceImportId: row.source_import_id || "",
+    sourceFileName: row.source_file_name || "",
+    sourceFileHash: row.source_file_hash || "",
+    importSummary: (() => { try { return JSON.parse(row.import_summary || "{}"); } catch { return {}; } })() as Record<string, number>,
+    documentMeta: { ...defaultDocumentMeta, ...storedMeta },
     numberingPattern: row.numbering_pattern,
     layoutFilePath: row.layout_file_path,
     status: row.status,
@@ -205,17 +233,6 @@ export function parseSubmission(row: SubmissionRow) {
     revision: row.revision,
     pdfPath: row.pdf_path,
   };
-}
-
-export function getActor(request: Request) {
-  const email = request.headers.get("oai-authenticated-user-email");
-  const encoded = request.headers.get("oai-authenticated-user-full-name");
-  const encoding = request.headers.get("oai-authenticated-user-full-name-encoding");
-  let name: string | null = null;
-  if (encoded && encoding === "percent-encoded-utf-8") {
-    try { name = decodeURIComponent(encoded); } catch { name = null; }
-  }
-  return { name: name || email || "Yasir Khan", email: email || "Local prototype user" };
 }
 
 export function validateData(fields: FormField[], data: Record<string, unknown>) {

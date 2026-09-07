@@ -43,7 +43,14 @@ const worker = {
       }, allowedWidths);
     }
 
-    return handler.fetch(request, env, ctx);
+    const response=await handler.fetch(request, env, ctx);
+    if(url.pathname.startsWith("/api/")){
+      const protectedResponse=new Response(response.body,response);
+      protectedResponse.headers.set("cache-control","private, no-store");
+      protectedResponse.headers.set("vary","Cookie");
+      return protectedResponse;
+    }
+    return response;
   },
 };
 

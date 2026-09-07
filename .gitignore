@@ -40,3 +40,13 @@ next-env.d.ts
 /.sites-runtime/
 /outputs/
 /work/
+/data/
+/backups/
+/output/
+/tmp/
+*.tsbuildinfo
+__pycache__/
+*.pyc
+*.zip
+.dev.vars*
+deploy/local/.htpasswd

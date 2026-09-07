@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.sites-runtime
+.wrangler
+data
+backups
+.env*
+.dev.vars*
+*.pem
+__pycache__
+deploy/local/.htpasswd
+output
+tmp
+*.zip
