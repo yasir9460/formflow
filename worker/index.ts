@@ -27,6 +27,9 @@ interface ExecutionContext {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // Route handlers share the Worker-provided binding without importing the
+    // Cloudflare-only module namespace, keeping the packaged ESM verifiable.
+    (globalThis as unknown as { __FORMFLOW_DB__?: D1Database }).__FORMFLOW_DB__ = env.DB;
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {

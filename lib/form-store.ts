@@ -1,5 +1,3 @@
-import { env } from "cloudflare:workers";
-
 export type FieldType =
   | "text"
   | "number"
@@ -104,8 +102,9 @@ const sequenceSql = `CREATE TABLE IF NOT EXISTS sequences (
 )`;
 
 export function db() {
-  if (!env.DB) throw new Error("Database binding is unavailable");
-  return env.DB;
+  const database = (globalThis as unknown as { __FORMFLOW_DB__?: D1Database }).__FORMFLOW_DB__;
+  if (!database) throw new Error("Database binding is unavailable");
+  return database;
 }
 
 export async function ensureSchema() {
